@@ -32,12 +32,16 @@
 #include <sstream>
 #include <crtdbg.h>
 
+
+
 #ifdef _DEBUG
-#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )
-// Replace _NORMAL_BLOCK with _CLIENT_BLOCK if you want the
-// allocations to be of _CLIENT_BLOCK type
+	#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )
+	// Replace _NORMAL_BLOCK with _CLIENT_BLOCK if you want the
+	// allocations to be of _CLIENT_BLOCK type
+	#define USE_VS_CRTDBG 1
 #else
-#define DBG_NEW new
+	#define DBG_NEW new
+	#define USE_VS_CRTDBG 0
 #endif
 
 
@@ -87,7 +91,8 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #define MULTITHREADED_ENABLED 0
 #define OPTIMIZED_FILE_READ 1
-
+#define USE_MAGIC_NUMBER 1
+// Use mutex for synchornized writes
 mutex g_lock;
 
 
@@ -129,11 +134,12 @@ public:
 
 void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _outputName);
 void DoMultiThreaded(vector<string> &_fileList, ESortType _sortType, string _outputName);
-vector<string> ReadFile(string &_fileName);
+void ReadFile(string &_fileName, vector<string> &ans);
 void ThreadedReadFile(string _fileName, vector<string>* _listOut);
 vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType);
 void WriteAndPrintResults(const vector<string>& _masterStringList, string _outputName, int _clocksTaken);
-vector<string> iterativeMergeSort(vector<string>& a, ESortType _sortType);
+void iterativeMergeSort(vector<string>& a, ESortType _sortType);
+bool detectTextFile(string& _fileName);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Main
@@ -143,41 +149,62 @@ int main() {
 	cin.tie(NULL);
 	cout.tie(NULL);
 	
-	_CrtMemState s1;
-	_CrtMemCheckpoint(&s1);
 	// Enumerate the directory for input files
 	vector<string> fileList;
+	// vector reserve will reserve memory. Adding elements will be easier. 50 is an approximate number
+	fileList.reserve(50);
     string inputDirectoryPath = "../InputFiles";
+	// This will check is the input directory is valid
+	if (!fs::is_directory(inputDirectoryPath)) {
+		cout << "Input Directory is not a valid directory" << endl;
+		return 0;
+	}
     for (const auto & entry : fs::directory_iterator(inputDirectoryPath)) {
 		if (!fs::is_directory(entry)) {
-			fileList.push_back(entry.path().string());
+			// push back creates a copy. Emplace back is efficient
+			string fileName = entry.path().string();
+			int len = fileName.size();
+			// check if file extension is of type .txt
+			if (fileName[len - 4] == '.' && fileName[len - 3] == 't' && fileName[len - 2] == 'x' && fileName[len - 1] == 't') {
+				fileList.emplace_back(fileName);
+			}
 		}
 		
 	}
+	// the vector can have more reserved memory than needed. Free that extra memory
+	fileList.shrink_to_fit();
+	// Check is any files were found
+	if (!fileList.size()) {
+		cout << "No files were found in the input directory!" << endl;
+		return 0;
+	}
+	// USE Visual Studio's CRT DBG for memory debugging
+#ifdef USE_VS_CRTDBG
+	_CrtMemState s1;
+	_CrtMemCheckpoint(&s1);
+#endif
 	
-	
-	
-	_CrtMemState s2;
-	_CrtMemCheckpoint(&s2);
-	_CrtMemState s3;
-	if (_CrtMemDifference(&s3, &s1, &s2))
-		_CrtMemDumpStatistics(&s3);
 
 	// Do the stuff
-	//DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
+	DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
 	//DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
-	DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
+	//DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
 #if MULTITHREADED_ENABLED
-	//DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
+	DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
 	//DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
-	DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
+	//DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
 #endif
 
 	// Wait
 	cout << endl << "Finished...";
-	//getchar();
-	
+	getchar();
+#ifdef USE_VS_CRTDBG
+	_CrtMemState s2;
+	_CrtMemCheckpoint(&s2);
+	_CrtMemState s3;
+	if (_CrtMemDifference(&s3, &s1, &s2)) _CrtMemDumpStatistics(&s3);
 	_CrtDumpMemoryLeaks();
+#endif
 	return 0;
 }
 
@@ -185,38 +212,56 @@ int main() {
 // The Stuff
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _outputName) {
-	clock_t startTime = clock();
-	vector<string> masterStringList;
-	for (unsigned int i = 0; i < _fileList.size(); ++i) {
-		vector<string> fileStringList = ReadFile(_fileList[i]);
-		//cout << _fileList[i] << endl;
-		for (unsigned int j = 0; j < fileStringList.size(); ++j) {
-			masterStringList.push_back(fileStringList[j]);
-		}		
+	try {
+		clock_t startTime = clock();
+		vector<string> masterStringList;
+		// reserve for 1000 elements
+		masterStringList.reserve(1000);
+		for (unsigned int i = 0; i < _fileList.size(); ++i) {
+			vector<string> fileStringList = {};
+			// pass by reference. This avoids copy
+			ReadFile(_fileList[i], fileStringList);
+			//cout << _fileList[i] << endl;
+			for (unsigned int j = 0; j < fileStringList.size(); ++j) {
+				masterStringList.emplace_back(fileStringList[j]);
+			}
+
+		}
+		// resize the vector to fit the actual data
+		masterStringList.shrink_to_fit();
+
+		//masterStringList = BubbleSort(masterStringList, _sortType);
+		// use merge sort because the complexity is O(nlogn). 
+		// Iterative is better since it avoids multiple function calls.
+		iterativeMergeSort(masterStringList, _sortType);
+		clock_t endTime = clock();
+		WriteAndPrintResults(masterStringList, _outputName, endTime - startTime);
+	}
+	catch (exception e) {
+		cout << "An error has occured" << endl;
 	}
 	
-	//masterStringList = BubbleSort(masterStringList, _sortType);
-	masterStringList = iterativeMergeSort(masterStringList, _sortType);
-	//_fileList.clear();
-	clock_t endTime = clock();
-	WriteAndPrintResults(masterStringList, _outputName, endTime - startTime);
 }
 
 void DoMultiThreaded(vector<string> &_fileList, ESortType _sortType, string _outputName) {
 	clock_t startTime = clock();
 	vector<string> masterStringList;
-	vector<thread> workerThreads;
+	masterStringList.reserve(1000);
+	// Initialize thread list at the begining 
+	vector<thread> workerThreads(_fileList.size());
 	for (unsigned int i = 0; i < _fileList.size(); ++i) {
-		vector<string> temp;
-		workerThreads.push_back(thread(ThreadedReadFile, _fileList[i], &masterStringList));
+		workerThreads[i] = thread(ThreadedReadFile, _fileList[i], &masterStringList);
 	}
+	// join all threads
 	for (int i = 0; i < _fileList.size(); i++) 
 		workerThreads[i].join();
 	
-
+	// shrink the vector is the memory reserved is greater than actual size
+	masterStringList.shrink_to_fit();
 	
 	//masterStringList = BubbleSort(masterStringList, _sortType);
-	masterStringList = iterativeMergeSort(masterStringList, _sortType);
+	// use merge sort
+	iterativeMergeSort(masterStringList, _sortType);
 	clock_t endTime = clock();
 
 	WriteAndPrintResults(masterStringList, _outputName, endTime - startTime);
@@ -226,30 +271,43 @@ void DoMultiThreaded(vector<string> &_fileList, ESortType _sortType, string _out
 // File Processing
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+bool detectTextFile(string& _fileName) {
 
-vector<string> ReadFile(string &_fileName) {
+	return true;
+}
+
+void ReadFile(string &_fileName, vector<string> &ans) {
+	// The optimized file read, reads the entire file buffer into the memory. 
+	// file handling is known to be slow hence it is beneficial if the i/o is minimzed by reading large chunks
 #if OPTIMIZED_FILE_READ
+
+#ifdef USE_MAGIC_NUMBER
+	// Future: Get database of all magic numbers and see that the file's magic number doesn't exist in it
+	if (!detectTextFile(_fileName)) return;
+#endif 
 	
 
 	ifstream f(_fileName, ios::in | ios::binary);
-
+	// return if the file is not open
+	if (!f.is_open()) return;
 	// Obtain the size of the file.
-	const unsigned sz = fs::file_size(_fileName);
+	const unsigned int sz = (unsigned int)fs::file_size(_fileName);
 
 	// Create a buffer.
 	string result(sz, '\0');
 
 	// Read the whole file into the buffer.
 	f.read(&result[0], sz);
-
-	//cout << result << endl;
+	// close the open file handle
+	f.close();
+	// count new lines to allocate a vector of size countofNewLine that will store all the \n separated strings
 	int countofNewLine = 1;
 	for (int i = 0; i < result.size(); i++) {
 		if (result[i] == '\n') countofNewLine++;
 		
 	}
-	//cout << countofNewLine << endl;
-	vector<string> ans(countofNewLine);
+	// resize the array
+	ans.resize(countofNewLine);
 	string a = "";
 	int j = 0;
 	for (int i = 0; i < result.size(); i++) {
@@ -264,6 +322,7 @@ vector<string> ReadFile(string &_fileName) {
 			}
 
 		#elif defined(_WIN32) || defined(WIN32)     /* _Win32 is usually defined by compilers targeting 32 or   64 bit Windows systems */
+			// windows uses \r\n to delimite a file
 			if (result[i] == '\r') {
 				ans[j++] = a;
 				i++;
@@ -278,11 +337,11 @@ vector<string> ReadFile(string &_fileName) {
 		
 	}
 	ans[j++] = a;
-	f.close();
+	
 	
 	//for (int i = 0; i < ans.size(); i++) cout << ans[i]<<" "<<i<<endl;
 
-	return ans;
+
 #else
 	vector<string> listOut;
 	streampos positionInFile = 0;
@@ -308,10 +367,25 @@ vector<string> ReadFile(string &_fileName) {
 }
 
 void ThreadedReadFile(string _fileName, vector<string>* _listOut) {
-	vector<string> temp = ReadFile(_fileName);
-	g_lock.lock();
-	(*_listOut).insert((*_listOut).end(), temp.begin(), temp.end());
-	g_lock.unlock();
+	// exceptions do not propagate from threads to the main thread. 
+	// Hence exception handling should be done in the child threads rather than main thread
+	try {
+		// initialize empty vector
+		vector<string> temp = {};
+		// read file data into vector
+		ReadFile(_fileName, temp);
+		// check is size is empty
+		if (temp.size() == 0) return;
+		// lock the _listOut vector so that writes can be synchronized
+		g_lock.lock();
+		(*_listOut).insert((*_listOut).end(), temp.begin(), temp.end());
+		// unlock the mutex
+		g_lock.unlock();
+	}
+	catch (exception e) {
+		cout << "An error has occured" << endl;
+	}
+	
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -352,29 +426,30 @@ bool AlphabeticalDescendingLastCharComparer::Sort(string &_first, string &_secon
 	}
 	return (i == _second.length());
 }
-
+// A common sort function that chooses the sort type based on _sortType
 bool commonSort(string &a, string &b, ESortType _sortType) {
 	bool ans = 0;
 	if (_sortType == ESortType::AlphabeticalAscending) {
-		AlphabeticalAscendingStringComparer* stringSorter = DBG_NEW AlphabeticalAscendingStringComparer();
-		ans = stringSorter->Sort(a, b);
-		delete stringSorter;
+		// Rather than using the heap, which is dynamic allocation and uses the 'new' keyword, using memory on the stack is much faster
+		// This is because the stack is sequential in the memory hence allocation is very quick
+		// C++ will automatically free memory. This is called automatic storage
+		// Stack should not be used if the variables are dynamic in nature since memory is limited
+		AlphabeticalAscendingStringComparer stringSorter;
+		ans = stringSorter.Sort(a, b);
 	}
 	else if (_sortType == ESortType::AlphabeticalDescending) {
-		AlphabeticalDescendingStringComparer* stringSorter = DBG_NEW AlphabeticalDescendingStringComparer();
-		ans = stringSorter->Sort(a, b);
-		delete stringSorter;
+		AlphabeticalDescendingStringComparer stringSorter;
+		ans = stringSorter.Sort(a, b);
 	}
 	else if (_sortType == ESortType::LastLetterAscending) {
-		AlphabeticalDescendingLastCharComparer* stringSorter = DBG_NEW AlphabeticalDescendingLastCharComparer();
-		ans = stringSorter->Sort(a, b);
-		delete stringSorter;
+		AlphabeticalDescendingLastCharComparer stringSorter;
+		ans = stringSorter.Sort(a, b);
 	}
 	return ans;
 }
 
-vector<string> merge(vector<string>& a, int l1, int r1, int l2, int r2, ESortType _sortType) {
-	vector<string> temp(a.size());
+void merge(vector<string>& a, int l1, int r1, int l2, int r2, ESortType _sortType, vector<string> &temp) {
+	
 	int index = 0;
 	while (l1 <= r1 && l2 <= r2) {
 		if (commonSort(a[l1], a[l2], _sortType)) {
@@ -398,11 +473,11 @@ vector<string> merge(vector<string>& a, int l1, int r1, int l2, int r2, ESortTyp
 		++index;
 		++l2;
 	}
-	return temp;
+	
 }
 
 
-vector<string> iterativeMergeSort(vector<string>& a, ESortType _sortType) {
+void iterativeMergeSort(vector<string>& a, ESortType _sortType) {
 	int len = 1;
 	while (len < a.size()) {
 		int i = 0;
@@ -417,7 +492,8 @@ vector<string> iterativeMergeSort(vector<string>& a, ESortType _sortType) {
 			if (r2 >= a.size()) {
 				r2 = a.size() - 1;
 			}
-			vector<string> temp = merge(a, l1, r1, l2, r2, _sortType);
+			vector<string> temp(a.size());
+			merge(a, l1, r1, l2, r2, _sortType, temp);
 			for (int j = 0; j <= r2 - l1 ; j++) {
 				a[i + j] = temp[j];
 			}
@@ -426,7 +502,7 @@ vector<string> iterativeMergeSort(vector<string>& a, ESortType _sortType) {
 		}
 		len *= 2;
 	}
-	return a;
+	
 }
 vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType) {
 	
@@ -451,6 +527,8 @@ void WriteAndPrintResults(const vector<string>& _masterStringList, string _outpu
 	cout << endl << _outputName << "\t- Clocks Taken: " << _clocksTaken << endl;
 	
 	ofstream fileOut(_outputName + ".txt", ofstream::trunc);
+	// Instead of writing small chunks and utilizing many i/o file calls, making one large chunk
+	// is more efficient since it minimizes the number of file i/o which is known to be slow
 	string output = "";
 	for (unsigned int i = 0; i < _masterStringList.size(); ++i) {
 		//fileOut << _masterStringList[i]<<endl;
