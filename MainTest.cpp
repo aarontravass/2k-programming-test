@@ -19,6 +19,7 @@
 //	* 20 points - Improve performance as much as possible on both single-threaded and multi-threaded versions; speed is more important than memory usage.
 //	* 10 points - Improve safety and stability; fix memory leaks and handle unexpected input and edge cases.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+#define _CRTDBG_MAP_ALLOC
 
 #include <string>
 #include <iostream>
@@ -29,6 +30,16 @@
 #include <vector>
 #include <mutex>
 #include <sstream>
+#include <crtdbg.h>
+
+#ifdef _DEBUG
+#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )
+// Replace _NORMAL_BLOCK with _CLIENT_BLOCK if you want the
+// allocations to be of _CLIENT_BLOCK type
+#else
+#define DBG_NEW new
+#endif
+
 
 #ifndef INCLUDE_STD_FILESYSTEM_EXPERIMENTAL
 #   if defined(__cpp_lib_filesystem)
@@ -85,21 +96,35 @@ enum class ESortType { AlphabeticalAscending, AlphabeticalDescending, LastLetter
 class IStringComparer {
 public:
 	virtual bool Sort(string &_first, string &_second) = 0;
+
+	~IStringComparer(){}
 };
 
 class AlphabeticalAscendingStringComparer : public IStringComparer {
 public:
 	virtual bool Sort(string &_first, string &_second);
+
+	~AlphabeticalAscendingStringComparer() {
+		
+	}
 };
 
 class AlphabeticalDescendingStringComparer : public IStringComparer {
 public:
 	virtual bool Sort(string &_first, string &_second);
+
+	~AlphabeticalDescendingStringComparer() {
+
+	}
 };
 
 class AlphabeticalDescendingLastCharComparer : public IStringComparer {
 public:
 	virtual bool Sort(string &_first, string &_second);
+
+	~AlphabeticalDescendingLastCharComparer() {
+
+	}
 };
 
 void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _outputName);
@@ -117,7 +142,9 @@ int main() {
 	ios_base::sync_with_stdio(0);
 	cin.tie(NULL);
 	cout.tie(NULL);
-
+	
+	_CrtMemState s1;
+	_CrtMemCheckpoint(&s1);
 	// Enumerate the directory for input files
 	vector<string> fileList;
     string inputDirectoryPath = "../InputFiles";
@@ -125,7 +152,16 @@ int main() {
 		if (!fs::is_directory(entry)) {
 			fileList.push_back(entry.path().string());
 		}
+		
 	}
+	
+	
+	
+	_CrtMemState s2;
+	_CrtMemCheckpoint(&s2);
+	_CrtMemState s3;
+	if (_CrtMemDifference(&s3, &s1, &s2))
+		_CrtMemDumpStatistics(&s3);
 
 	// Do the stuff
 	//DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
@@ -139,7 +175,9 @@ int main() {
 
 	// Wait
 	cout << endl << "Finished...";
-	getchar();
+	//getchar();
+	
+	_CrtDumpMemoryLeaks();
 	return 0;
 }
 
@@ -316,18 +354,23 @@ bool AlphabeticalDescendingLastCharComparer::Sort(string &_first, string &_secon
 }
 
 bool commonSort(string &a, string &b, ESortType _sortType) {
+	bool ans = 0;
 	if (_sortType == ESortType::AlphabeticalAscending) {
-		AlphabeticalAscendingStringComparer* stringSorter = new AlphabeticalAscendingStringComparer();
-		return stringSorter->Sort(a, b);
+		AlphabeticalAscendingStringComparer* stringSorter = DBG_NEW AlphabeticalAscendingStringComparer();
+		ans = stringSorter->Sort(a, b);
+		delete stringSorter;
 	}
 	else if (_sortType == ESortType::AlphabeticalDescending) {
-		AlphabeticalDescendingStringComparer* stringSorter = new AlphabeticalDescendingStringComparer();
-		return stringSorter->Sort(a, b);
+		AlphabeticalDescendingStringComparer* stringSorter = DBG_NEW AlphabeticalDescendingStringComparer();
+		ans = stringSorter->Sort(a, b);
+		delete stringSorter;
 	}
 	else if (_sortType == ESortType::LastLetterAscending) {
-		AlphabeticalDescendingLastCharComparer* stringSorter = new AlphabeticalDescendingLastCharComparer();
-		return stringSorter->Sort(a, b);
+		AlphabeticalDescendingLastCharComparer* stringSorter = DBG_NEW AlphabeticalDescendingLastCharComparer();
+		ans = stringSorter->Sort(a, b);
+		delete stringSorter;
 	}
+	return ans;
 }
 
 vector<string> merge(vector<string>& a, int l1, int r1, int l2, int r2, ESortType _sortType) {
