@@ -93,9 +93,12 @@ using namespace std;
 #define OPTIMIZED_FILE_READ 1
 #define USE_MAGIC_NUMBER 0
 #define USE_VS_CRTDBG 0
-// Use mutex for synchornized writes
-mutex g_lock;
 
+
+struct alignas(64) padded_vector {
+	vector<string> value;
+	padded_vector() { value = vector<string>(); }
+};
 
 enum class ESortType { AlphabeticalAscending, AlphabeticalDescending, LastLetterAscending };
 
@@ -188,16 +191,22 @@ int main() {
 	_CrtMemState s1;
 	_CrtMemCheckpoint(&s1);
 #endif
-	
+	/*for (int times = 0; times < 100; times++) {
+		DoSingleThreaded(fileList, ESortType::AlphabeticalAscending, "SingleAscending");
+	}*/
+	cout << "Regular" << endl;
+	for (int times = 0; times < 100; times++) {
+		DoMultiThreaded(fileList, ESortType::AlphabeticalAscending, "MultiAscending");
+	}
 
 	// Do the stuff
-	DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
-	DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
-	DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
+	//DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
+	//DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
+	//DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
 #if MULTITHREADED_ENABLED
-	DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
-	DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
-	DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
+	//DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
+	//DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
+	//DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
 #endif
 
 	// Wait
@@ -237,8 +246,8 @@ void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _ou
 
 		//masterStringList = BubbleSort(masterStringList, _sortType);
 		// use merge sort because the complexity is O(nlogn). 
-		// Iterative is better since it avoids multiple function calls.
-		iterativeMergeSort(masterStringList, _sortType);
+		// Comment line 241 and uncomment line 242 to use the threaded merge sort
+		mergeSort(masterStringList, _sortType, 0, masterStringList.size()-1);
 		//threadedMergeSort(masterStringList, _sortType);
 		clock_t endTime = clock();
 		WriteAndPrintResults(masterStringList, _outputName, endTime - startTime);
@@ -255,20 +264,20 @@ void DoMultiThreaded(vector<string> &_fileList, ESortType _sortType, string _out
 	// Initialize thread list at the begining 
 	vector<thread> workerThreads(_fileList.size());
 	// write to different sections of the memory so that insert is faster
-	vector<vector<string>> master(_fileList.size(), vector<string>());
+	vector<padded_vector> master(_fileList.size(), padded_vector());
 	for (unsigned int i = 0; i < _fileList.size(); ++i) {
-		workerThreads[i] = thread(ThreadedReadFile, _fileList[i], &master[i]);
+		workerThreads[i] = thread(ThreadedReadFile, _fileList[i], &master[i].value);
 	}
 	// join all threads
 	for (int i = 0; i < _fileList.size(); i++) 
 		workerThreads[i].join();
 	for (int i = 0; i < _fileList.size(); i++) {
-		masterStringList.insert(masterStringList.end(), master[i].begin(), master[i].end());
+		masterStringList.insert(masterStringList.end(), master[i].value.begin(), master[i].value.end());
 	}
 	
 	
 	
-	//masterStringList = BubbleSort(masterStringList, _sortType);
+	 //mergeSort(masterStringList, _sortType, 0, masterStringList.size() - 1);
 	// use threaded merge sort
 	threadedMergeSort(masterStringList, _sortType);
 	clock_t endTime = clock();
@@ -458,33 +467,6 @@ bool commonSort(string &a, string &b, ESortType _sortType) {
 	return ans;
 }
 
-void merge(vector<string>& a, int l1, int r1, int l2, int r2, ESortType _sortType, vector<string> &temp) {
-	
-	int index = 0;
-	while (l1 <= r1 && l2 <= r2) {
-		if (commonSort(a[l1], a[l2], _sortType)) {
-			temp[index] = a[l1];
-			++index;
-			++l1;
-		}
-		else {
-			temp[index] = a[l2];
-			++index;
-			++l2;
-		}
-	}
-	while (l1 <= r1) {
-		temp[index] = a[l1];
-		++index;
-		++l1;
-	}
-	while (l2 <= r2) {
-		temp[index] = a[l2];
-		++index;
-		++l2;
-	}
-	
-}
 
 void merge2(vector<string>& a, ESortType _sortType, int low, int mid, int high) {
 	int i, j, k;
@@ -543,43 +525,17 @@ void threadedMergeSort(vector<string>& a, ESortType _sortType) {
 	int low = 0, high = (a.size() - 1);
 	
 	int mid = low + (high - low) / 2;
+	// Use 2 threads to sort the first half and second half of the array
 	thread t1(mergeTSort, &a, _sortType, low, mid);
 	thread t2(mergeTSort, &a, _sortType, mid + 1, high);
 	t1.join();
 	t2.join();
-
+	// merge the first and second half
 	merge2(a, _sortType, low, mid, high);
 	
 
 }
 
-void iterativeMergeSort(vector<string>& a, ESortType _sortType) {
-	int len = 1;
-	while (len < a.size()) {
-		int i = 0;
-		while (i < a.size()) {
-			int l1 = i;
-			int r1 = i + len - 1;
-			int l2 = i + len;
-			int r2 = i + 2 * len - 1;
-			if (l2 >= a.size()) {
-				break;
-			}
-			if (r2 >= a.size()) {
-				r2 = a.size() - 1;
-			}
-			vector<string> temp(a.size());
-			merge(a, l1, r1, l2, r2, _sortType, temp);
-			for (int j = 0; j <= r2 - l1 ; j++) {
-				a[i + j] = temp[j];
-			}
-			i = i + 2 * len;
-
-		}
-		len *= 2;
-	}
-	
-}
 
 
 vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType) {
@@ -602,7 +558,7 @@ vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType) {
 // Output
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void WriteAndPrintResults(const vector<string>& _masterStringList, string _outputName, int _clocksTaken) {
-	cout << endl << _outputName << "\t- Clocks Taken: " << _clocksTaken << endl;
+	cout << _clocksTaken << endl;
 	
 	ofstream fileOut(_outputName + ".txt", ofstream::trunc);
 	// Instead of writing small chunks and utilizing many i/o file calls, making one large chunk
