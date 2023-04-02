@@ -95,7 +95,7 @@ using namespace std;
 #define USE_VS_CRTDBG 0
 
 
-struct alignas(64) padded_vector {
+struct alignas(1024) padded_vector {
 	vector<string> value;
 	padded_vector() { value = vector<string>(); }
 };
@@ -142,12 +142,11 @@ void ReadFile(string &_fileName, vector<string> &ans);
 void ThreadedReadFile(string _fileName, vector<string>* _listOut);
 vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType);
 void WriteAndPrintResults(const vector<string>& _masterStringList, string _outputName, int _clocksTaken);
-void iterativeMergeSort(vector<string>& a, ESortType _sortType);
 bool detectTextFile(string& _fileName);
-void merge2(vector<string>& a, ESortType _sortType, int low, int mid, int high);
-void mergeSort(vector<string>& a, ESortType _sortType, int low, int high);
+void merge2(vector<string>& a, ESortType &_sortType, int low, int mid, int high);
+void mergeSort(vector<string>& a, ESortType &_sortType, int low, int high);
 void mergeTSort(vector<string>* a, ESortType _sortType, int thread_number, int max_threads);
-void threadedMergeSort(vector<string>& a, ESortType _sortType);
+void threadedMergeSort(vector<string>& a, ESortType &_sortType);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Main
@@ -156,7 +155,10 @@ int main() {
 	ios_base::sync_with_stdio(0);
 	cin.tie(NULL);
 	cout.tie(NULL);
-	
+#if USE_VS_CRTDBG
+	_CrtMemState s1;
+	_CrtMemCheckpoint(&s1);
+#endif
 	// Enumerate the directory for input files
 	vector<string> fileList;
 	// vector reserve will reserve memory. Adding elements will be easier. 50 is an approximate number
@@ -167,6 +169,7 @@ int main() {
 		cout << "Input Directory is not a valid directory" << endl;
 		return 0;
 	}
+
     for (const auto & entry : fs::directory_iterator(inputDirectoryPath)) {
 		if (!fs::is_directory(entry)) {
 			// push back creates a copy. Emplace back is efficient
@@ -187,26 +190,23 @@ int main() {
 		return 0;
 	}
 	// USE Visual Studio's CRT DBG for memory debugging
-#if USE_VS_CRTDBG
-	_CrtMemState s1;
-	_CrtMemCheckpoint(&s1);
-#endif
+
 	/*for (int times = 0; times < 100; times++) {
 		DoSingleThreaded(fileList, ESortType::AlphabeticalAscending, "SingleAscending");
 	}*/
-	cout << "Regular" << endl;
+	/*cout << "Regular" << endl;
 	for (int times = 0; times < 100; times++) {
 		DoMultiThreaded(fileList, ESortType::AlphabeticalAscending, "MultiAscending");
-	}
+	}*/
 
 	// Do the stuff
-	//DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
-	//DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
-	//DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
+	DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
+	DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
+	DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
 #if MULTITHREADED_ENABLED
-	//DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
-	//DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
-	//DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
+	DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
+	DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
+	DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
 #endif
 
 	// Wait
@@ -217,6 +217,8 @@ int main() {
 	_CrtMemCheckpoint(&s2);
 	_CrtMemState s3;
 	if (_CrtMemDifference(&s3, &s1, &s2)) _CrtMemDumpStatistics(&s3);
+#endif
+#if USE_VS_CRTDBG
 	_CrtDumpMemoryLeaks();
 #endif
 	return 0;
@@ -246,7 +248,7 @@ void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _ou
 
 		//masterStringList = BubbleSort(masterStringList, _sortType);
 		// use merge sort because the complexity is O(nlogn). 
-		// Comment line 241 and uncomment line 242 to use the threaded merge sort
+		// Comment line 252 and uncomment line 253 to use the threaded merge sort
 		mergeSort(masterStringList, _sortType, 0, masterStringList.size()-1);
 		//threadedMergeSort(masterStringList, _sortType);
 		clock_t endTime = clock();
@@ -264,6 +266,7 @@ void DoMultiThreaded(vector<string> &_fileList, ESortType _sortType, string _out
 	// Initialize thread list at the begining 
 	vector<thread> workerThreads(_fileList.size());
 	// write to different sections of the memory so that insert is faster
+	// use padded vector so that we reduce false sharing in memory thus reducing cache hits to the wrong part
 	vector<padded_vector> master(_fileList.size(), padded_vector());
 	for (unsigned int i = 0; i < _fileList.size(); ++i) {
 		workerThreads[i] = thread(ThreadedReadFile, _fileList[i], &master[i].value);
@@ -295,14 +298,15 @@ bool detectTextFile(string& _fileName) {
 }
 
 void ReadFile(string &_fileName, vector<string> &ans) {
+	// Future: Get database of all magic numbers and see that the file's magic number doesn't exist in it
+#if USE_MAGIC_NUMBER
+	if (!detectTextFile(_fileName)) return;
+#endif 
 	// The optimized file read, reads the entire file buffer into the memory. 
 	// file handling is known to be slow hence it is beneficial if the i/o is minimzed by reading large chunks
 #if OPTIMIZED_FILE_READ
 
-#if USE_MAGIC_NUMBER
-	// Future: Get database of all magic numbers and see that the file's magic number doesn't exist in it
-	if (!detectTextFile(_fileName)) return;
-#endif 
+
 	
 
 	ifstream f(_fileName, ios::in | ios::binary);
@@ -446,7 +450,7 @@ bool AlphabeticalDescendingLastCharComparer::Sort(string &_first, string &_secon
 	return (i == _second.length());
 }
 // A common sort function that chooses the sort type based on _sortType
-bool commonSort(string &a, string &b, ESortType _sortType) {
+bool commonSort(string &a, string &b, ESortType &_sortType) {
 	bool ans = 0;
 	if (_sortType == ESortType::AlphabeticalAscending) {
 		// Rather than using the heap, which is dynamic allocation and uses the 'new' keyword, using memory on the stack is much faster
@@ -468,7 +472,7 @@ bool commonSort(string &a, string &b, ESortType _sortType) {
 }
 
 
-void merge2(vector<string>& a, ESortType _sortType, int low, int mid, int high) {
+void merge2(vector<string>& a, ESortType &_sortType, int low, int mid, int high) {
 	int i, j, k;
 	int n1 = mid - low + 1;
 	int n2 = high - mid;
@@ -502,7 +506,7 @@ void merge2(vector<string>& a, ESortType _sortType, int low, int mid, int high) 
 	}
 
 }
-void mergeSort(vector<string>& a, ESortType _sortType, int low,int high) {
+void mergeSort(vector<string>& a, ESortType &_sortType, int low,int high) {
 	
 	
 	if (low < high) {
@@ -515,11 +519,16 @@ void mergeSort(vector<string>& a, ESortType _sortType, int low,int high) {
 void mergeTSort(vector<string>* a, ESortType _sortType, int low, int high) {
 		//mergeSort((*a), _sortType, 0,  ((*a).size() - 1 )/ 2);
 		//mergeSort((*a), _sortType, ((*a).size() + 1)/ 2, (*a).size() - 1);
+	try {
 		mergeSort((*a), _sortType, low, high);
+	}
+	catch (exception e) {
+		cout << "An error has occured" << endl;
+	}
 	
 }
 
-void threadedMergeSort(vector<string>& a, ESortType _sortType) {
+void threadedMergeSort(vector<string>& a, ESortType &_sortType) {
 	//int max_threads = 2;
 	
 	int low = 0, high = (a.size() - 1);
@@ -558,7 +567,7 @@ vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType) {
 // Output
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void WriteAndPrintResults(const vector<string>& _masterStringList, string _outputName, int _clocksTaken) {
-	cout << _clocksTaken << endl;
+	cout << endl<< _outputName<<" "<< _clocksTaken << endl;
 	
 	ofstream fileOut(_outputName + ".txt", ofstream::trunc);
 	// Instead of writing small chunks and utilizing many i/o file calls, making one large chunk
