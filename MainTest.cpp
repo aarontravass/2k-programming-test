@@ -15,9 +15,9 @@
 //	* 10 points - Make the program produce a SingleDescending.txt file that matches CorrectOutput/SingleDescending.txt. DONE
 //	* 10 points - Make the program produce a SingleLastLetter.txt file that matches CorrectOutput/SingleLastLetter.txt. DONE
 //	* 20 points - Write a brief report on what you found, what you did, and what other changes to the code you'd recommend. DONE
-//	* 10 points - Make the program produce three MultiXXX.txt files that match the equivalent files in CorrectOutput; it must be multi-threaded. //DONE
-//	* 20 points - Improve performance as much as possible on both single-threaded and multi-threaded versions; speed is more important than memory usage.
-//	* 10 points - Improve safety and stability; fix memory leaks and handle unexpected input and edge cases.
+//	* 10 points - Make the program produce three MultiXXX.txt files that match the equivalent files in CorrectOutput; it must be multi-threaded. DONE
+//	* 20 points - Improve performance as much as possible on both single-threaded and multi-threaded versions; speed is more important than memory usage. DONE
+//	* 10 points - Improve safety and stability; fix memory leaks and handle unexpected input and edge cases. DONE
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #define _CRTDBG_MAP_ALLOC
 
@@ -41,7 +41,7 @@
 	#define USE_VS_CRTDBG 1
 #else
 	#define DBG_NEW new
-	#define USE_VS_CRTDBG 0
+	
 #endif
 
 
@@ -89,9 +89,10 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Definitions and Declarations
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-#define MULTITHREADED_ENABLED 0
+#define MULTITHREADED_ENABLED 1
 #define OPTIMIZED_FILE_READ 1
-#define USE_MAGIC_NUMBER 1
+#define USE_MAGIC_NUMBER 0
+#define USE_VS_CRTDBG 0
 // Use mutex for synchornized writes
 mutex g_lock;
 
@@ -140,6 +141,10 @@ vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType);
 void WriteAndPrintResults(const vector<string>& _masterStringList, string _outputName, int _clocksTaken);
 void iterativeMergeSort(vector<string>& a, ESortType _sortType);
 bool detectTextFile(string& _fileName);
+void merge2(vector<string>& a, ESortType _sortType, int low, int mid, int high);
+void mergeSort(vector<string>& a, ESortType _sortType, int low, int high);
+void mergeTSort(vector<string>* a, ESortType _sortType, int thread_number, int max_threads);
+void threadedMergeSort(vector<string>& a, ESortType _sortType);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Main
@@ -179,7 +184,7 @@ int main() {
 		return 0;
 	}
 	// USE Visual Studio's CRT DBG for memory debugging
-#ifdef USE_VS_CRTDBG
+#if USE_VS_CRTDBG
 	_CrtMemState s1;
 	_CrtMemCheckpoint(&s1);
 #endif
@@ -187,18 +192,18 @@ int main() {
 
 	// Do the stuff
 	DoSingleThreaded(fileList, ESortType::AlphabeticalAscending,	"SingleAscending");
-	//DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
-	//DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
+	DoSingleThreaded(fileList, ESortType::AlphabeticalDescending,	"SingleDescending");
+	DoSingleThreaded(fileList, ESortType::LastLetterAscending,		"SingleLastLetter");
 #if MULTITHREADED_ENABLED
 	DoMultiThreaded(fileList, ESortType::AlphabeticalAscending,		"MultiAscending");
-	//DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
-	//DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
+	DoMultiThreaded(fileList, ESortType::AlphabeticalDescending,	"MultiDescending");
+	DoMultiThreaded(fileList, ESortType::LastLetterAscending,		"MultiLastLetter");
 #endif
 
 	// Wait
 	cout << endl << "Finished...";
 	getchar();
-#ifdef USE_VS_CRTDBG
+#if USE_VS_CRTDBG
 	_CrtMemState s2;
 	_CrtMemCheckpoint(&s2);
 	_CrtMemState s3;
@@ -234,6 +239,7 @@ void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _ou
 		// use merge sort because the complexity is O(nlogn). 
 		// Iterative is better since it avoids multiple function calls.
 		iterativeMergeSort(masterStringList, _sortType);
+		//threadedMergeSort(masterStringList, _sortType);
 		clock_t endTime = clock();
 		WriteAndPrintResults(masterStringList, _outputName, endTime - startTime);
 	}
@@ -246,22 +252,25 @@ void DoSingleThreaded(vector<string> &_fileList, ESortType _sortType, string _ou
 void DoMultiThreaded(vector<string> &_fileList, ESortType _sortType, string _outputName) {
 	clock_t startTime = clock();
 	vector<string> masterStringList;
-	masterStringList.reserve(1000);
 	// Initialize thread list at the begining 
 	vector<thread> workerThreads(_fileList.size());
+	// write to different sections of the memory so that insert is faster
+	vector<vector<string>> master(_fileList.size(), vector<string>());
 	for (unsigned int i = 0; i < _fileList.size(); ++i) {
-		workerThreads[i] = thread(ThreadedReadFile, _fileList[i], &masterStringList);
+		workerThreads[i] = thread(ThreadedReadFile, _fileList[i], &master[i]);
 	}
 	// join all threads
 	for (int i = 0; i < _fileList.size(); i++) 
 		workerThreads[i].join();
+	for (int i = 0; i < _fileList.size(); i++) {
+		masterStringList.insert(masterStringList.end(), master[i].begin(), master[i].end());
+	}
 	
-	// shrink the vector is the memory reserved is greater than actual size
-	masterStringList.shrink_to_fit();
+	
 	
 	//masterStringList = BubbleSort(masterStringList, _sortType);
-	// use merge sort
-	iterativeMergeSort(masterStringList, _sortType);
+	// use threaded merge sort
+	threadedMergeSort(masterStringList, _sortType);
 	clock_t endTime = clock();
 
 	WriteAndPrintResults(masterStringList, _outputName, endTime - startTime);
@@ -281,7 +290,7 @@ void ReadFile(string &_fileName, vector<string> &ans) {
 	// file handling is known to be slow hence it is beneficial if the i/o is minimzed by reading large chunks
 #if OPTIMIZED_FILE_READ
 
-#ifdef USE_MAGIC_NUMBER
+#if USE_MAGIC_NUMBER
 	// Future: Get database of all magic numbers and see that the file's magic number doesn't exist in it
 	if (!detectTextFile(_fileName)) return;
 #endif 
@@ -307,13 +316,13 @@ void ReadFile(string &_fileName, vector<string> &ans) {
 		
 	}
 	// resize the array
-	ans.resize(countofNewLine);
+	ans.reserve(countofNewLine);
 	string a = "";
 	int j = 0;
 	for (int i = 0; i < result.size(); i++) {
 		#ifdef __unix__                    /* __unix__ is usually defined by compilers targeting Unix systems */
 			if (result[i] == '\n') {
-				ans[j++] = a;
+				if (a.size()) ans.emplace_back(a);
 				a = "";
 				a.clear();
 			}
@@ -322,9 +331,9 @@ void ReadFile(string &_fileName, vector<string> &ans) {
 			}
 
 		#elif defined(_WIN32) || defined(WIN32)     /* _Win32 is usually defined by compilers targeting 32 or   64 bit Windows systems */
-			// windows uses \r\n to delimite a file
+			// windows uses \r\n to delimit a file
 			if (result[i] == '\r') {
-				ans[j++] = a;
+				if(a.size()) ans.emplace_back(a);
 				i++;
 				a = "";
 				a.clear();
@@ -336,7 +345,8 @@ void ReadFile(string &_fileName, vector<string> &ans) {
 		#endif
 		
 	}
-	ans[j++] = a;
+	ans.emplace_back(a);
+	ans.shrink_to_fit();
 	
 	
 	//for (int i = 0; i < ans.size(); i++) cout << ans[i]<<" "<<i<<endl;
@@ -376,11 +386,11 @@ void ThreadedReadFile(string _fileName, vector<string>* _listOut) {
 		ReadFile(_fileName, temp);
 		// check is size is empty
 		if (temp.size() == 0) return;
-		// lock the _listOut vector so that writes can be synchronized
-		g_lock.lock();
+		
+		
 		(*_listOut).insert((*_listOut).end(), temp.begin(), temp.end());
-		// unlock the mutex
-		g_lock.unlock();
+		
+		
 	}
 	catch (exception e) {
 		cout << "An error has occured" << endl;
@@ -476,6 +486,72 @@ void merge(vector<string>& a, int l1, int r1, int l2, int r2, ESortType _sortTyp
 	
 }
 
+void merge2(vector<string>& a, ESortType _sortType, int low, int mid, int high) {
+	int i, j, k;
+	int n1 = mid - low + 1;
+	int n2 = high - mid;
+	vector<string> left(n1), right(n2);
+	for (i = 0; i < n1; i++)
+		left[i] = a[low + i];
+	for (j = 0; j < n2; j++)
+		right[j] = a[mid + 1 + j];
+	i = 0, j = 0;
+	k = low;
+	while (i<n1 && j<n2) {
+		if (commonSort(left[i], right[j], _sortType)) {
+			a[k] = left[i];
+			i++;
+		}
+		else {
+			a[k] = right[j];
+			j++;
+		}
+		k++;
+	}
+	while (i < n1) {
+		a[k] = left[i];
+		i++;
+		k++;
+	}
+	while (j<n2) {
+		a[k] = right[j];
+		j++;
+		k++;
+	}
+
+}
+void mergeSort(vector<string>& a, ESortType _sortType, int low,int high) {
+	
+	
+	if (low < high) {
+		int mid = low + (high - low) / 2;
+		mergeSort(a, _sortType, low, mid);
+		mergeSort(a, _sortType, mid + 1, high);
+		merge2(a, _sortType, low, mid, high);
+	}
+}
+void mergeTSort(vector<string>* a, ESortType _sortType, int low, int high) {
+		//mergeSort((*a), _sortType, 0,  ((*a).size() - 1 )/ 2);
+		//mergeSort((*a), _sortType, ((*a).size() + 1)/ 2, (*a).size() - 1);
+		mergeSort((*a), _sortType, low, high);
+	
+}
+
+void threadedMergeSort(vector<string>& a, ESortType _sortType) {
+	//int max_threads = 2;
+	
+	int low = 0, high = (a.size() - 1);
+	
+	int mid = low + (high - low) / 2;
+	thread t1(mergeTSort, &a, _sortType, low, mid);
+	thread t2(mergeTSort, &a, _sortType, mid + 1, high);
+	t1.join();
+	t2.join();
+
+	merge2(a, _sortType, low, mid, high);
+	
+
+}
 
 void iterativeMergeSort(vector<string>& a, ESortType _sortType) {
 	int len = 1;
@@ -504,6 +580,8 @@ void iterativeMergeSort(vector<string>& a, ESortType _sortType) {
 	}
 	
 }
+
+
 vector<string> BubbleSort(vector<string> _listToSort, ESortType _sortType) {
 	
 	
