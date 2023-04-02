@@ -1,0 +1,9 @@
+First of all I tried to see if the files were being read correctly. I noticed that in each of the files, the last word wasn't being read. So I found out that listOut was being used only if endofFile is false but when endofFile is false, it wouldn't insert the last word. So I moved listOut.push_back one line above and modified the if to include fileIn.close and a break statement.
+
+Next, I experimented with DoSingleThreaded and noticed that if string a is a prefix of string b, then a is printed below b but in the correct files it is reversed. So in the return I changed it to i== _first.length(). This gave the correct output for SingleAscending.txt
+
+Moved to SingleDescending. I created a new commonSort function that takes 2 strings and the type of sort and return either true or false depending on the sorting and the string. This made it easier to code and reduced the if statments. I created a new class for SingleDescending called AlphabeticalDescendingStringComparer and swapped the return statements. Compared with the answer and found that prefixes were in the wrong order. I changed the final return to (i == _second.length()) and it worked.
+
+For the last one, I noticed a pattern that the strings were sorted in reverse order. So I reversed the strings and applied SingleAscending sort function and changed the last return to (i == _second.length())
+
+
